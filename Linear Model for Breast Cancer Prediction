@@ -1,0 +1,363 @@
+author: "Stephen Kofi Acheampong - Stu# 2582947"
+#date: "Mar 15, 2021"
+
+
+The goal is to fit a model 
+
+**Objective** To fit a model to predict the Target variable using the predictors in the dataset.
+
+library("readxl")
+path <- 'C:/Users/steve/Downloads/CorrectedHeartData.csv'
+heart <- read.csv(path)
+
+library(dplyr)
+library(ggplot2)
+library(GGally)
+library(ggmap)
+library(car)
+library(e1071)
+library(gridExtra)
+library(mgcv)
+library(drc)
+library(caret)
+library(MASS)
+library(ROCR)
+```
+
+
+**Preparation of Data**
+
+# data type
+str(heart)
+
+# making categorical fields factors
+heart$sex <- as.factor(heart$sex)
+heart$cp <- as.factor(heart$cp)
+heart$fbs <- as.factor(heart$fbs)
+heart$exang <- as.factor(heart$exang)
+heart$slope <- as.factor(heart$slope)
+heart$thal <- as.factor(heart$thal)
+heart$restecg <- as.factor(heart$restecg)
+heart$target <- as.factor(heart$target)
+
+# re-checking data type
+str(heart)
+
+# descriptive statistics
+summary(heart)
+
+# number of total missing values
+sum(is.na(heart)) 
+
+# sample size
+dim(heart)
+
+# fist five rows
+head(heart) 
+
+
+
+**Exploratory Data Analysis**
+
+# extracting numeric variables
+heart.numeric<-heart %>%
+  select_if(is.numeric)
+
+# correlation matrix
+rheart <- cor(heart.numeric)
+round(rheart,2)
+
+# plotting predictors against response
+# The scatter plot suggests a non-linear relationship between the two variables
+a<-ggplot(heart,aes(x=target, y=Age, fill=target)) + geom_boxplot()+
+  labs(x="Target", y="Age")+ theme_bw()
+
+b<-ggplot(heart,aes(x=target, y=trestbps, fill=target)) + geom_boxplot()+
+  labs(x="Target", y="Trestbps")+ theme_bw()
+
+c<-ggplot(heart,aes(x=target, y=chol, fill=target)) + geom_boxplot()+
+  labs(x="Target", y="Cholesterol")+ theme_bw()
+
+d<-ggplot(heart,aes(x=target, y=thalach, fill=target)) + geom_boxplot()+
+  labs(x="Target", y="Thalach")+ theme_bw()
+
+e<-ggplot(heart,aes(x=target, y=oldpeak, fill=target)) + geom_boxplot()+
+  labs(x="Target", y="Oldpeak")+ theme_bw()
+
+f<-ggplot(heart,aes(x=target, y=ca, fill=target)) + geom_boxplot()+
+  labs(x="Target", y="ca")+ theme_bw()
+
+g<-ggplot(heart,aes(x=sex, fill=sex))+geom_bar(stat="count")+theme_minimal()
+
+
+
+mosaicplot(heart$sex ~ heart$target,
+           main="Status by Gender", shade=FALSE,color=TRUE,
+           xlab="Gender", ylab="Heart disease")
+
+
+**Creating Train and Test Set**
+# to achieve reproducible model
+set.seed(12345)
+
+# random splitting data into training(80%) and test(20%) data
+index <- createDataPartition(heart$target, p=0.8, list = FALSE)
+TrainSet <- heart[index,] # training set
+TestSet <- heart[-index,] # test set
+
+```
+
+
+**Fitting Model**
+**Logistic Model**
+# a logit model with all parameters
+logit.fit <- glm(target ~ . , data=TrainSet ,family =binomial )
+summary(logit.fit)
+
+# backward variable selection procedure
+logit.var <- stepAIC(logit.fit, direction = 'backward', trace = FALSE)
+logit.var
+
+# using boostraping for variable selection
+library(bootStepAIC)
+logit.var2 <- boot.stepAIC(logit.fit, TrainSet, B=50)
+logit.var2
+
+# final logit model
+logit.fit2 <- glm(target ~ sex + cp + trestbps + chol + thalach + oldpeak +
+                    slope + ca + thal, data=TrainSet ,family =binomial )
+summary(logit.fit2)
+exp(coef(logit.fit2))
+
+TrainSet$pred <- fitted(logit.fit2)
+pred<-prediction(TrainSet$pred,TrainSet$target)
+perf<-performance(pred,"tpr","fpr")
+plot(perf,colorize = T,print.cutoffs.at = seq(0.1,by = 0.1))
+# With the use of ROC curve we can observe that 0.5 is having better sensitivity and specificity.There we select 0.5 as our cutoff to distinguish.
+
+# predict using the test set
+TestSet$pred <- predict(logit.fit2, TestSet, type = "response")
+
+#grouping predictions
+TestSet$pred_label <- as.factor(ifelse(TestSet$pred>0.45, "1", "0"))
+#creating a confusion matrix
+logit_conf.mat <- confusionMatrix(data = TestSet$pred_label, reference = TestSet$target, positive = "1")
+logit_conf.mat
+
+library(pROC)
+logit_roc <- roc(TestSet$target ~ TestSet$pred, plot = TRUE, print.auc = TRUE)
+#logit AUC
+as.numeric(logit_roc$auc)
+
+
+**Linear Discriminant Analysis**
+# checking normality of variables for numeric variables
+lshap <- lapply(heart.numeric, shapiro.test)
+lres <- sapply(lshap, `[`, c("statistic","p.value"))
+
+
+boxplot(heart.numeric$Age)
+qqPlot(heart.numeric$trestbps)
+qqPlot(heart.numeric$chol)
+qqPlot(heart.numeric$thalach)
+qqPlot(heart.numeric$oldpeak)
+qqPlot(heart.numeric$ca)
+
+library(ggpubr)
+library(moments)
+
+# Distribution of Age variable
+summary(heart.numeric$Age)
+ggdensity(heart.numeric, x = "Age", fill = "lightgray", title = "AGE") +
+  scale_x_continuous(limits = c(25, 80)) +
+  stat_overlay_normal_density(color = "red", linetype = "dashed")
+
+# Distribution of trestbps variable
+summary(heart.numeric$trestbps)
+#skewed to the right
+ggdensity(heart.numeric, x = "trestbps", fill = "lightgray", title = "trestbps") +
+  scale_x_continuous(limits = c(94, 200)) +
+  stat_overlay_normal_density(color = "red", linetype = "dashed") 
+
+# Distribution of Chol variable
+summary(heart.numeric$chol)
+#skewed to the right
+ggdensity(heart.numeric, x = "chol", fill = "lightgray", title = "CHOL") +
+  scale_x_continuous(limits = c(125, 570)) +
+  stat_overlay_normal_density(color = "red", linetype = "dashed")
+
+# Distribution of thalach variable
+#skewed to the left
+summary(heart.numeric$thalach)
+ggdensity(heart.numeric, x = "thalach", fill = "lightgray", title = "thalach") +
+  scale_x_continuous(limits = c(70, 205)) +
+  stat_overlay_normal_density(color = "red", linetype = "dashed")
+
+# Distribution of oldpeak variable
+#skewed to the right
+summary(heart.numeric$oldpeak)
+ggdensity(heart.numeric, x = "oldpeak", fill = "lightgray", title = "oldpeak") +
+  scale_x_continuous(limits = c(0, 7)) +
+  stat_overlay_normal_density(color = "red", linetype = "dashed")
+
+# Distribution of ca variable
+#skewed to the left
+summary(heart.numeric$ca)
+ggdensity(heart.numeric, x = "ca", fill = "lightgray", title = "CA") +
+  scale_x_continuous(limits = c(0, 5)) +
+  stat_overlay_normal_density(color = "red", linetype = "dashed")
+
+# tranforming variable
+heart.numeric1 <- heart.numeric %>%
+  dplyr::select(Age, chol, trestbps, thalach, oldpeak, ca) %>%
+  mutate(LogAge = log10(Age)) %>%
+  mutate(SqrtTha = thalach^(0.5)) %>%
+  mutate(LogChol = log10(chol))
+
+
+heart.numeric$trestbps <- log10(heart.numeric$trestbps)
+heart.numeric$oldpeak <- log10(heart.numeric$oldpeak)
+df <- log10(heart.numeric$chol)
+shapiro.test(df)
+
+shapiro.test(heart.numeric$oldpeak)
+skewness(heart.numeric$trestbps)
+summary(heart.numeric$trestbps)
+ggdensity(heart.numeric, x = "trestbps", fill = "lightgray", title = "oldpeak") +
+  scale_x_continuous(limits = c(0, 3)) +
+  stat_overlay_normal_density(color = "red", linetype = "dashed")
+
+
+**LDA fit for normal variables**
+heart1 <- heart %>%
+  dplyr::select(Age, chol, target) %>%
+  mutate(LogAge = log10(Age)) %>%
+  mutate(LogChol = log10(chol))
+
+# to achieve reproducible model
+set.seed(12345)
+
+# random splitting data into training(80%) and test(20%) data
+index1 <- createDataPartition(heart1$target, p=0.8, list = FALSE)
+TrainSet1 <- heart1[index1,] # training set
+TestSet1 <- heart1[-index1,] # test set
+
+#fit the LDA to the train set
+lda.fit1 <- lda(target ~ LogAge + LogChol, data=TrainSet1)
+lda.fit1
+
+# Confusion matrix and accuracy - training data
+lda.pred.train1 <- predict(lda.fit1, TrainSet1)
+lda.prediction.train1 <- prediction(lda.pred.train1$posterior[,2], TrainSet1$target)
+#area under curve
+lda.AUC.train1 <- performance(lda.prediction.train1,"auc")@y.values
+#confusion matrix
+tab1 <- table(Predicted=lda.pred.train1$class, Actual = TrainSet1$target)
+sum(diag(tab1))/sum(tab1)
+
+
+# Confusion matrix and accuracy - training data
+lda.pred.test1 <- predict(lda.fit1, TestSet1)
+lda.prediction.test1 <- prediction(lda.pred.test1$posterior[,2], TestSet1$target)
+lda.AUC.test1 <- performance(lda.prediction.test1,"auc")@y.values
+lda_conf.mat1 <- table(Predicted = lda.pred.test1$class, Actual = TestSet1$target)
+# accuracy
+lda.acc1 <- sum(diag(lda_conf.mat1))/sum(lda_conf.mat1)
+
+
+**LDA fit for scaled variables**
+
+# normalising data numeric data
+heart2 <- heart %>%
+  dplyr::select(Age, chol, trestbps, thalach, oldpeak, ca, target)
+  
+
+preproc <- preProcess(heart2, method=c("center", "scale"))
+norm <- predict(preproc, heart2)
+summary(norm)
+
+#issue of normality still not solved
+ggdensity(norm, x = "trestbps", fill = "lightgray", title = "oldpeak") +
+  scale_x_continuous(limits = c(0, 7)) +
+  stat_overlay_normal_density(color = "red", linetype = "dashed")
+
+# to achieve reproducible model
+set.seed(12345)
+
+# random splitting data into training(80%) and test(20%) data
+index2 <- createDataPartition(norm$target, p=0.8, list = FALSE)
+TrainSet2 <- norm[index2,] # training set
+TestSet2 <- norm[-index2,] # test set
+
+#fit the LDA to the train set
+lda.fit2 <- lda(target ~ Age + chol, data=TrainSet2)
+lda.fit2
+
+# Confusion matrix and accuracy - training data
+lda.pred.train2 <- predict(lda.fit2, TrainSet2)
+lda.prediction.train2 <- prediction(lda.pred.train2$posterior[,2], TrainSet2$target)
+#area under curve
+lda.AUC.train2 <- performance(lda.prediction.train2,"auc")@y.values
+#confusion matrix
+tab2 <- table(Predicted=lda.pred.train2$class, Actual = TrainSet2$target)
+sum(diag(tab2))/sum(tab2)
+
+
+# Confusion matrix and accuracy - training data
+lda.pred.test2 <- predict(lda.fit2, TestSet2)
+lda.prediction.test2 <- prediction(lda.pred.test2$posterior[,2], TestSet2$target)
+lda.AUC.test2 <- performance(lda.prediction.test2,"auc")@y.values
+lda_conf.mat2 <- table(Predicted = lda.pred.test2$class, Actual = TestSet2$target)
+# accuracy
+lda.acc2 <- sum(diag(lda_conf.mat2))/sum(lda_conf.mat2)
+
+
+
+**QDA fit**  
+
+#fit the QDA to the train set using transformed data
+qda.fit <- qda(target ~ LogAge + LogChol, data=TrainSet1)
+qda.fit
+
+# Confusion matrix and accuracy - training data
+qda.pred.train <- predict(qda.fit, TrainSet1)
+qda.prediction.train <- prediction(qda.pred.train$posterior[,2], TrainSet1$target)
+#area under curve
+qda.AUC.train <- performance(qda.prediction.train,"auc")@y.values
+#confusion matrix
+qtab <- table(Predicted=qda.pred.train$class, Actual = TrainSet1$target)
+sum(diag(qtab))/sum(qtab)
+
+
+# Confusion matrix and accuracy - training data
+qda.pred.test <- predict(qda.fit, TestSet1)
+qda.prediction.test <- prediction(qda.pred.test$posterior[,2], TestSet1$target)
+qda.AUC.test <- performance(qda.prediction.test,"auc")@y.values
+qda_conf.mat <- table(Predicted = qda.pred.test$class, Actual = TestSet1$target)
+# accuracy
+qda.acc <- sum(diag(qda_conf.mat))/sum(qda_conf.mat)
+
+
+
+#fit the QDA to the train set
+qda.fit1 <- lda(target ~ Age + chol, data=TrainSet2)
+qda.fit1
+
+# Confusion matrix and accuracy - training data
+qda.pred.train1 <- predict(qda.fit1, TrainSet2)
+qda.prediction.train1 <- prediction(qda.pred.train1$posterior[,2], TrainSet1$target)
+#area under curve
+qda.AUC.train1 <- performance(qda.prediction.train1,"auc")@y.values
+#confusion matrix
+tab3 <- table(Predicted=qda.pred.train1$class, Actual = TrainSet2$target)
+sum(diag(tab3))/sum(tab3)
+
+
+# Confusion matrix and accuracy - training data
+qda.pred.test1 <- predict(qda.fit1, TestSet2)
+qda.prediction.test1 <- prediction(qda.pred.test1$posterior[,2], TestSet2$target)
+qda.AUC.test1 <- performance(qda.prediction.test1,"auc")@y.values
+qda_conf.mat1 <- table(Predicted = qda.pred.test1$class, Actual = TestSet2$target)
+# accuracy
+qda.acc1 <- sum(diag(qda_conf.mat1))/sum(qda_conf.mat1)
+
